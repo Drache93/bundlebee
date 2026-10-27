@@ -485,5 +485,8 @@ function findModule(cache, v, root) {
     if (nm) return nm
   }
 
+  const nm = cache[new URL(v, 'file:///').href]
+  if (nm) return nm
+
   throw new Error(`failed to find module: ${v}`)
 }
