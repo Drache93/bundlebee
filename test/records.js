@@ -1,7 +1,7 @@
 const test = require('brittle')
 const b4a = require('b4a')
 const { Version } = require('bare-semver')
-const records = require('../lib/release-records')
+const records = require('../dist/lib/records')
 
 test('release index bytes follow SemVer ordering for numeric, textual and prefix prereleases', (t) => {
   const versions = []

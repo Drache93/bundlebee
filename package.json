@@ -2,7 +2,7 @@
   "name": "bundlebee",
   "version": "2.0.0",
   "description": "bundlebee",
-  "main": "index.js",
+  "main": "index.cjs",
   "imports": {
     "fs": {
       "bare": "bare-fs",
@@ -12,16 +12,18 @@
   "exports": {
     "./package": "./package.json",
     ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
+      "types": "./index.d.cts",
+      "default": "./index.cjs"
+    },
+    "./types": {
+      "types": "./dist/lib/types.d.ts",
+      "default": "./dist/lib/types.js"
     }
   },
   "files": [
-    "package.json",
-    "index.js",
-    "index.d.ts",
-    "schema",
-    "lib"
+    "index.cjs",
+    "index.d.cts",
+    "dist"
   ],
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -36,17 +38,21 @@
     "prettier": "^3.6.2",
     "prettier-config-holepunch": "^2.0.0",
     "test-tmp": "^1.4.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "bare-buffer": "^3.7.1"
   },
   "scripts": {
     "format": "prettier . --write",
     "test": "npm run test:types && npm run test:node && npm run test:bare",
     "lint": "prettier . --check && lunte",
-    "build": "node build.js",
+    "build": "node build.mjs",
     "test:types": "tsc -p test/types",
     "test:node": "brittle-node test/node.mjs",
     "test:bare": "brittle-bare test/all.mjs",
-    "test:generate": "brittle-make-test test/all.mjs test/index.js test/records.js test/releases.js && brittle-make-test test/node.mjs test/records.js"
+    "test:generate": "brittle-make-test test/all.mjs test/index.js test/records.js test/releases.js && brittle-make-test test/node.mjs test/records.js",
+    "build:schema": "node build.js",
+    "pretest": "npm run build",
+    "prepack": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -71,9 +77,12 @@
     "hypercore-id-encoding": "^1.3.0",
     "hyperschema": "^1.20.1",
     "ready-resource": "^1.2.0",
-    "url-file-url": "^1.0.5"
+    "url-file-url": "^1.0.5",
+    "scope-lock": "^1.2.4",
+    "bare-url": "^2.4.5"
   },
   "engines": {
     "bare": ">=1.34.0"
-  }
+  },
+  "types": "index.d.cts"
 }

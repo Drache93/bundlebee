@@ -170,7 +170,7 @@ const mod = await b.load(new URL('file:///path/to/project/'), '/index.js')
 
 #### `const b = new Bundlebee(store, [opts])`
 
-Create a new Bundlebee instance backed by a Hyperbee2. `store` is passed directly to the `hyperbee2` constructor. `opts` are forwarded to Hyperbee2.
+Create a new Bundlebee instance backed by a Hyperbee2. `store` is passed directly to the `hyperbee2` constructor. `opts` configure the Hyperbee2 session. Pass a Corestore session when the caller retains ownership of its main store.
 
 #### `const b = await Bundlebee.require(store, ...files, [opts])`
 
@@ -178,7 +178,7 @@ Static helper that creates a Bundlebee and imports one or more `.bundle` files (
 
 #### `await b.ready()`
 
-Wait for the underlying Hyperbee2 to be ready. This is done automatically on init and use of any async functions.
+Wait for the underlying Hyperbee2 to be ready. Construction is lazy. The first asynchronous method opens the underlying bee; `close()` also releases the owned store when called before first use.
 
 #### `const entry = await b.get(key, [checkout])`
 
@@ -228,3 +228,11 @@ You can find the original `Bundlebee` still on [NPM](https://www.npmjs.com/packa
 ## License
 
 Apache-2.0
+
+## Development
+
+The handwritten implementation is strict TypeScript with erasable syntax. `npm run build` generates CommonJS output and the package entry; `require('bundlebee')` continues to return the class directly. Public declarations, including the compatibility namespace, derive from the TypeScript source. `npm test` builds and runs the Node record tests, strict consumer type check, and Bare integration suite.
+
+`await bee.update({ signal })` refreshes the head through Hypercore without creating transport connections. Cancellation preserves `signal.reason`; the caller owns network discovery and replication. `loadRelease` and `prefetch` retain immutable snapshot behavior and never refresh the head.
+
+`scope-lock` serializes the module snapshot and index transactions across publisher sessions. `bare-url` supplies the same URL implementation to traversal and module protocols on both runtimes.

@@ -1,14 +1,25 @@
-const fs = require('fs')
-const { pathToFileURL, fileURLToPath } = require('url-file-url')
-const b4a = require('b4a')
-const crypto = require('hypercore-crypto')
-const { error } = require('./release-records')
+import URL from 'bare-url'
+import fs from 'fs'
+import { pathToFileURL, fileURLToPath } from 'url-file-url'
+import b4a from 'b4a'
+import crypto from 'hypercore-crypto'
+import { ReleaseError, hasCode } from './errors'
+import type { ReleasePin, Platform, Signal } from './types'
+import type Buffer from 'bare-buffer'
 
-module.exports = async function materialize(pin, assets, directory, target, signal) {
-  const urls = new Map()
+export async function materialize(
+  pin: ReleasePin,
+  assets: ReadonlyMap<string, Buffer>,
+  options: { directory?: string | { readonly href: string }; target: Platform; signal?: Signal }
+): Promise<Map<string, URL>> {
+  const { directory, target, signal } = options
+  const urls = new Map<string, URL>()
   if (assets.size === 0) return urls
   if (!directory) {
-    throw error('ERR_ASSET_DIRECTORY_REQUIRED', 'An assetDirectory is required for release assets')
+    throw new ReleaseError(
+      'ERR_ASSET_DIRECTORY_REQUIRED',
+      'An assetDirectory is required for release assets'
+    )
   }
   const rootPath =
     typeof directory === 'object' && directory !== null
@@ -21,14 +32,16 @@ module.exports = async function materialize(pin, assets, directory, target, sign
   const base = new URL(folder, root)
   await ensureDirectory(base, root)
   for (const [path, bytes] of assets) {
-    if (signal?.aborted) throw error('ABORT_ERR', 'Release operation aborted')
+    if (signal?.aborted) {
+      throw signal.reason ?? new ReleaseError('ABORT_ERR', 'Release operation aborted')
+    }
     const url = new URL('.' + path, base)
     await ensureDirectory(new URL('./', url), root)
     const filename = fileURLToPath(url)
     try {
       const stat = await fs.promises.lstat(filename)
       if (!stat.isFile() || stat.isSymbolicLink()) {
-        throw error('ERR_ASSET_PATH', 'Asset cache path is not a regular file')
+        throw new ReleaseError('ERR_ASSET_PATH', 'Asset cache path is not a regular file')
       }
       const existing = await fs.promises.readFile(filename)
       if (b4a.equals(existing, bytes)) {
@@ -36,7 +49,7 @@ module.exports = async function materialize(pin, assets, directory, target, sign
         continue
       }
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err
+      if (!hasCode(err, 'ENOENT')) throw err
     }
     const temporary = filename + '.' + b4a.toString(crypto.randomBytes(16), 'hex') + '.tmp'
     try {
@@ -44,7 +57,7 @@ module.exports = async function materialize(pin, assets, directory, target, sign
       await fs.promises.rename(temporary, filename)
     } finally {
       await fs.promises.unlink(temporary).catch((err) => {
-        if (err.code !== 'ENOENT') throw err
+        if (!hasCode(err, 'ENOENT')) throw err
       })
     }
     urls.set(path, url)
@@ -52,9 +65,9 @@ module.exports = async function materialize(pin, assets, directory, target, sign
   return urls
 }
 
-async function ensureDirectory(url, root) {
+async function ensureDirectory(url: URL, root: URL): Promise<void> {
   if (!url.href.startsWith(root.href)) {
-    throw error('ERR_ASSET_PATH', 'Asset path escapes cache directory')
+    throw new ReleaseError('ERR_ASSET_PATH', 'Asset path escapes cache directory')
   }
   let current = root
   for (const segment of url.href.slice(root.href.length).split('/').filter(Boolean)) {
@@ -63,11 +76,11 @@ async function ensureDirectory(url, root) {
     try {
       await fs.promises.mkdir(filename)
     } catch (err) {
-      if (err.code !== 'EEXIST') throw err
+      if (!hasCode(err, 'EEXIST')) throw err
     }
     const stat = await fs.promises.lstat(filename)
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw error('ERR_ASSET_PATH', 'Asset cache contains a symlink or non-directory')
+      throw new ReleaseError('ERR_ASSET_PATH', 'Asset cache contains a symlink or non-directory')
     }
   }
 }

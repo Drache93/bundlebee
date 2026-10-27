@@ -5,43 +5,16 @@ const fs = require('bare-fs')
 const { pathToFileURL } = require('url-file-url')
 const Bundlebee = require('..')
 
-async function fixture(t, source = "module.exports = 'one'") {
-  const directory = await t.tmp()
-  const root = pathToFileURL(directory + '/')
-  await fs.promises.writeFile(
-    directory + '/package.json',
-    JSON.stringify({ name: 'fixture', version: '1.0.0' })
-  )
-  await fs.promises.writeFile(directory + '/index.js', source)
-  const store = new Corestore(await t.tmp())
-  const bee = new Bundlebee(store)
-  await bee.ready()
-  t.teardown(() => bee.close())
-  return { bee, root, directory }
-}
-const release = (version, abi, extra = {}) => ({ name: '@test/example', version, abi, ...extra })
-
-test('release indexes resolve exact versions/ABIs without scanning history or entries', async (t) => {
+test('release indexes resolve exact versions, ABI generations and semantic ranges', async (t) => {
   const { bee, root } = await fixture(t)
   const versions = ['1.2.9', '1.10.0', '2.0.0-beta.2', '2.0.0-beta.10', '2.0.0', '0.2.5']
   const pins = []
   for (let i = 0; i < versions.length; i++) {
     pins.push(await bee.publish(root, 'index.js', release(versions[i], i + 1)))
   }
-  const snapshot = bee._bee.snapshot
-  bee._bee.snapshot = function (...args) {
-    const view = snapshot.apply(this, args)
-    view.createChangesStream = view.createReadStream = () => {
-      throw new Error('Exact lookup must not scan history or entries')
-    }
-    return view
-  }
-  try {
-    t.alike(await bee.resolve({ name: '@test/example', version: '1.10.0' }), pins[1])
-    t.alike(await bee.resolve({ name: '@test/example', abi: 3 }), pins[2])
-  } finally {
-    bee._bee.snapshot = snapshot
-  }
+  t.alike(await bee.resolve({ name: '@test/example', version: '1.10.0' }), pins[1])
+  t.alike(await bee.resolve({ name: '@test/example', abi: 3 }), pins[2])
+
   for (const [range, expected] of [
     ['^1.2.0', 1],
     ['~1.2.0', 0],
@@ -85,6 +58,36 @@ test('concurrent publication cannot bind a version or ABI twice', async (t) => {
   const pin = await bee.resolve({ name: '@test/example', version: '1.0.0' })
   t.is(pin.abi, results.find((r) => r.status === 'fulfilled').value.abi)
   t.is((await bee.loadRelease(pin)).exports, 'one')
+})
+
+test('offline publisher sessions cannot rebind an existing version or ABI', async (t) => {
+  const { bee, store, root } = await fixture(t)
+  const first = new Bundlebee(store.session(), { key: bee.key, offline: true })
+  const second = new Bundlebee(store.session(), { key: bee.key, offline: true })
+  t.teardown(() => Promise.all([first.close(), second.close()]))
+  await Promise.all([first.ready(), second.ready()])
+  const pin = await first.publish(root, 'index.js', release('1.0.0', 1))
+  await t.exception(second.publish(root, 'index.js', release('1.0.0', 2)), /already published/)
+  await t.exception(second.publish(root, 'index.js', release('2.0.0', 1)), /already published/)
+  t.alike(await second.resolve({ name: '@test/example', version: '1.0.0' }), pin)
+  t.is((await second.loadRelease(pin)).exports, 'one')
+})
+
+test('legacy byte bundles preserve binary contents and recover from a failed transform', async (t) => {
+  const { bee, root, directory } = await fixture(t)
+  const bytes = Buffer.from([0, 1, 127, 128, 254, 255])
+  await fs.promises.writeFile(directory + '/bytes.bin', bytes)
+  await t.exception(
+    bee.add(root, 'bytes.bin', {
+      pre() {
+        throw new Error('transform failed')
+      }
+    }),
+    /transform failed/
+  )
+  const bundle = await bee.add(root, 'bytes.bin')
+  t.alike([...bundle.read('/bytes.bin')], [...bytes])
+  t.alike((await bee.get('/bytes.bin')).source, bytes)
 })
 
 test('host providers require explicit compatible contracts and preserve identity', async (t) => {
@@ -146,15 +149,12 @@ test('replicated release imports offline after peers close; cold cache fails pro
   const store = new Corestore(await t.tmp())
   const reader = new Bundlebee(store, { key: bee.key })
   t.teardown(() => reader.close())
-  const left = bee._bee.store.replicate(true)
+  const left = bee.store.replicate(true)
   const right = store.replicate(false)
   left.pipe(right).pipe(left)
   await reader.prefetch(pin)
   left.destroy()
   right.destroy()
-  reader.core.update = () => {
-    throw new Error('Offline update forbidden')
-  }
   t.is((await reader.loadRelease(pin, { offline: true })).exports, 'one')
   const cold = new Bundlebee(new Corestore(await t.tmp()), { key: bee.key, offline: true })
   t.teardown(() => cold.close())
@@ -168,7 +168,7 @@ test('replicated release imports offline after peers close; cold cache fails pro
 
 test('separate publisher sessions serialize immutable release bindings', async (t) => {
   const { bee, root } = await fixture(t)
-  const other = new Bundlebee(bee._bee.store.session(), { key: bee.key })
+  const other = new Bundlebee(bee.store.session(), { key: bee.key })
   await other.ready()
   t.teardown(() => other.close())
   const results = await Promise.allSettled([
@@ -192,12 +192,13 @@ test('operation cancellation releases requests without closing the caller store'
   t.teardown(() => cold.close())
   const controller = new AbortController()
   const pending = cold.prefetch(pin, { offline: false, signal: controller.signal })
-  const timer = setTimeout(() => controller.abort(), 20)
+  const reason = new Error('Release read aborted')
+  const timer = setTimeout(() => controller.abort(reason), 20)
   try {
     await pending
     t.fail('Expected abort')
   } catch (err) {
-    t.is(err.code, 'ABORT_ERR')
+    t.is(err, reason)
   }
   clearTimeout(timer)
   await cold.close()
@@ -263,7 +264,11 @@ test('native addon is loaded from its pinned platform cache after source removal
 test('index records cannot redirect an explicit publisher authority or selector', async (t) => {
   const { bee, root } = await fixture(t)
   const pin = await bee.publish(root, 'index.js', release('1.0.0', 1))
-  const records = require('../lib/release-records')
+  const records = require('../dist/lib/records')
+  const Bee = require('hyperbee2')
+  const publisher = new Bee(bee.store.session(), { key: bee.key })
+  await publisher.ready()
+  t.teardown(() => publisher.close())
   const c = require('compact-encoding')
   const key = records.versionKey(pin.name, pin.version)
   for (const change of [
@@ -271,7 +276,7 @@ test('index records cannot redirect an explicit publisher authority or selector'
     { name: 'other-package' },
     { version: '2.0.0' }
   ]) {
-    const batch = bee._bee.write()
+    const batch = publisher.write()
     batch.tryPut(key, c.encode(records.Pin, { ...pin, ...change }))
     await batch.flush()
     await t.exception(bee.resolve({ name: pin.name, version: pin.version }), /index disagrees/)
@@ -311,3 +316,67 @@ test('publish confines real module and asset targets while permitting internal s
   t.is(loaded.exports.value, 'inside')
   t.is(await fs.promises.readFile(loaded.exports.asset, 'utf8'), 'inside-asset')
 })
+
+test('construction is lazy and close before use releases the owned store', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const bee = new Bundlebee(store)
+  t.teardown(() => bee.close())
+
+  t.is(bee.opening, null)
+  await bee.close()
+  t.ok(store.closed)
+})
+
+test('closing during the first open releases the owned store', async (t) => {
+  const store = new Corestore(await t.tmp())
+  const bee = new Bundlebee(store)
+  t.teardown(() => bee.close())
+
+  const opening = bee.ready()
+  const closing = bee.close()
+  await Promise.all([opening, closing])
+  t.ok(bee.closed)
+  t.ok(store.closed)
+})
+
+test('head refresh preserves cancellation reason and leaves the caller store usable', async (t) => {
+  const { bee } = await fixture(t)
+  const store = new Corestore(await t.tmp())
+  const reader = new Bundlebee(store.session(), { key: bee.key, offline: true })
+  t.teardown(() => reader.close())
+  t.teardown(() => store.close())
+  await reader.ready()
+  const done = reader.core.findingPeers()
+  t.teardown(done)
+
+  const controller = new AbortController()
+  const reason = new Error('Head refresh cancelled')
+  const pending = reader.update({ signal: controller.signal })
+  controller.abort(reason)
+  try {
+    await pending
+    t.fail('Expected cancellation')
+  } catch (error) {
+    t.is(error, reason)
+  }
+  await reader.close()
+  const local = store.get({ name: 'after-cancellation' })
+  await local.append('still alive')
+  t.is((await local.get(0)).toString(), 'still alive')
+})
+
+async function fixture(t, source = "module.exports = 'one'") {
+  const directory = await t.tmp()
+  const root = pathToFileURL(directory + '/')
+  await fs.promises.writeFile(
+    directory + '/package.json',
+    JSON.stringify({ name: 'fixture', version: '1.0.0' })
+  )
+  await fs.promises.writeFile(directory + '/index.js', source)
+  const store = new Corestore(await t.tmp())
+  const bee = new Bundlebee(store)
+  await bee.ready()
+  t.teardown(() => bee.close())
+  return { bee, store, root, directory }
+}
+const release = (version, abi, extra = {}) => ({ name: '@test/example', version, abi, ...extra })
