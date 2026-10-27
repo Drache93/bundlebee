@@ -49,7 +49,7 @@
     "test:types": "tsc -p test/types",
     "test:node": "brittle-node test/node.mjs",
     "test:bare": "brittle-bare test/all.mjs",
-    "test:generate": "brittle-make-test test/all.mjs test/index.js test/records.js test/releases.js && brittle-make-test test/node.mjs test/records.js",
+    "test:generate": "brittle-make-test test/all.mjs test/index.js test/records.js test/releases.js && brittle-make-test test/node.mjs test/records.js test/startup.js",
     "build:schema": "node build.js",
     "pretest": "npm run build",
     "prepack": "npm run build"

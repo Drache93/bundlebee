@@ -1,6 +1,6 @@
 import URL from 'bare-url'
-import resolveBare from 'bare-module-traverse/resolve/bare'
 import traverse from 'bare-module-traverse'
+import resolveBare from 'bare-module-traverse/resolve/bare'
 import Bundle from 'bare-bundle'
 import Module from 'bare-module'
 import { fileURLToPath } from 'url-file-url'

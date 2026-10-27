@@ -8,6 +8,7 @@ async function runTests() {
   test.pause()
 
   await test.load(import.meta.resolve('./records.js'))
+  await test.load(import.meta.resolve('./startup.js'))
 
   test.resume()
 }

@@ -1,7 +1,7 @@
 import URL from 'bare-url'
 import fs from 'fs'
-import resolveBare from 'bare-module-traverse/resolve/bare'
 import traverse, { type TraverseOptions } from 'bare-module-traverse'
+import resolveBare from 'bare-module-traverse/resolve/bare'
 import { fileURLToPath, pathToFileURL } from 'url-file-url'
 import { ReleaseError, hasCode } from './errors'
 import { releasePath } from './records'
