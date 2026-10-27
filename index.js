@@ -8,6 +8,7 @@ const ReadyResource = require('ready-resource')
 const Bee = require('hyperbee2')
 const c = require('compact-encoding')
 const { getEncoding } = require('./schema')
+const releases = require('./lib/releases')
 
 const Entry = getEncoding('@bundlebee/entry')
 const Manifest = getEncoding('@bundlebee/manifest')
@@ -25,16 +26,41 @@ module.exports = class Bundlebee extends ReadyResource {
   constructor(store, opts = {}) {
     super()
 
-    const { key, length = -1 } = opts
-    const autoUpdate = !key || length === -1
+    const { key, length = -1, offline = false } = opts
+    const autoUpdate = offline ? false : !key || length === -1
+    this.offline = offline
 
-    this._bee = new Bee(store, { autoUpdate, ...opts })
+    this._bee = new Bee(store, {
+      autoUpdate,
+      ...opts,
+      ...(offline ? { autoUpdate: false, wait: false } : {})
+    })
 
     if (key && length !== -1) {
       this._bee.move({ key, length })
     }
 
     this.ready().catch(noop)
+  }
+
+  static validateRelease(pin) {
+    return releases.validatePin(pin)
+  }
+
+  publish(root, entry, options) {
+    return releases.publish(this, root, entry, options)
+  }
+
+  resolve(query) {
+    return releases.resolve(this, query)
+  }
+
+  prefetch(pin, options) {
+    return releases.prefetch(this, pin, options)
+  }
+
+  loadRelease(pin, options) {
+    return releases.load(this, pin, options)
   }
 
   static async require(store, ...files) {
@@ -115,7 +141,7 @@ module.exports = class Bundlebee extends ReadyResource {
 
     for await (const data of b.createReadStream()) {
       const id = data.key.toString()
-      if (id === MANIFEST_KEY_VALUE || id === PEERDEPS_KEY_VALUE) continue
+      if (id.startsWith('#')) continue
       const entry = c.decode(Entry, data.value)
       yield { ...entry, id }
     }
@@ -223,13 +249,14 @@ module.exports = class Bundlebee extends ReadyResource {
     })
 
     const bundleCache = Object.create(null)
+    const builtins = Object.create(null)
     const allResolutions = Object.create(null)
 
     const peerDeps = await this.peerDependencies(checkout)
 
     for await (const data of b.createReadStream()) {
       const id = data.key.toString()
-      if (id === MANIFEST_KEY_VALUE || id === PEERDEPS_KEY_VALUE) continue
+      if (id.startsWith('#')) continue
 
       const { resolutions, source } = c.decode(Entry, data.value)
 
@@ -241,8 +268,8 @@ module.exports = class Bundlebee extends ReadyResource {
         const nm =
           (v.includes('node_modules/') && skipModules) || skip ? findModule(cache, v, root) : null
         if (nm) {
-          m[k] = 'bundle://host' + v
-          bundleCache[m[k]] = nm
+          m[k] = 'builtin:bundlebee-host-' + Object.keys(builtins).length
+          builtins[m[k].slice(8)] = nm.exports
         } else {
           m[k] = 'bundle://layer' + v
         }
@@ -253,6 +280,7 @@ module.exports = class Bundlebee extends ReadyResource {
     return Module.load(new URL(entry, 'bundle://layer/'), {
       protocol,
       resolutions: allResolutions,
+      builtins,
       cache: bundleCache
     })
   }
