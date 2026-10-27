@@ -1,7 +1,7 @@
 import Bundlebee = require('../../')
 
 declare const store: import('../../dist/lib/storage').Store
-const bee = new Bundlebee(store, { offline: true })
+const bee = new Bundlebee(store, { name: 'qvac-provider-python', offline: true })
 const options: Bundlebee.PublishOptions = {
   name: '@test/module',
   version: '1.2.3',

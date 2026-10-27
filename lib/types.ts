@@ -8,6 +8,7 @@ export interface HeadInfo {
 }
 
 export interface BundlebeeOptions {
+  readonly name?: string
   readonly key?: Uint8Array | string
   readonly length?: number
   readonly offline?: boolean
